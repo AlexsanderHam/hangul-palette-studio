@@ -66,6 +66,21 @@ test("local session serves the palette UI and fonts without exposing source geom
     const stylesheet = await fetch(`${base}/studio.css`);
     expect(stylesheet.status).toBe(200);
     expect(stylesheet.headers.get("content-type")).toContain("text/css");
+    for (const [name, contentType] of [
+      ["favicon.ico", "image/x-icon"],
+      ["favicon.svg", "image/svg+xml"],
+      ["apple-touch-icon.png", "image/png"],
+    ]) {
+      const response = await fetch(`${base}/${name}`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(contentType);
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      const bytes = Buffer.from(await response.arrayBuffer());
+      expect(bytes).toEqual(await readFile(join(import.meta.dir, "../../../src/studio/client", name)));
+      if (name === "favicon.svg") expect(bytes.toString()).toContain("<svg");
+      else if (name === "favicon.ico") expect(bytes.subarray(0, 4)).toEqual(Buffer.from([0, 0, 1, 0]));
+      else expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    }
     for (const route of [
       "/glyphs.json",
       "/raw-shapes.json",
@@ -73,7 +88,6 @@ test("local session serves the palette UI and fonts without exposing source geom
       "/editor.js",
       "/editor.css",
       "/editor.html",
-      "/favicon.svg",
     ]) {
       expect((await fetch(base + route, { headers: { "X-Studio-Token": session.token } })).status).toBe(404);
     }

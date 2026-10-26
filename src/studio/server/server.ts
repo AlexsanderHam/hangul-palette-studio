@@ -23,6 +23,15 @@ const HEADERS = {
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
 };
 
+const STATIC_FILES: Readonly<Record<string, readonly [path: string, contentType: string]>> = {
+  "/": ["src/studio/client/index.html", "text/html; charset=utf-8"],
+  "/studio.css": ["src/studio/client/studio.css", "text/css; charset=utf-8"],
+  "/favicon.ico": ["src/studio/client/favicon.ico", "image/x-icon"],
+  "/favicon.svg": ["src/studio/client/favicon.svg", "image/svg+xml"],
+  "/apple-touch-icon.png": ["src/studio/client/apple-touch-icon.png", "image/png"],
+  "/LICENSE-OFL": ["LICENSE-OFL", "text/plain; charset=utf-8"],
+};
+
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
@@ -217,20 +226,12 @@ export async function startStudioServer(options: StudioServerOptions) {
               headers: { ...HEADERS, "Content-Type": "font/otf", "Cache-Control": "private, max-age=86400" },
             });
           }
-          const file = {
-            "/": "src/studio/client/index.html",
-            "/studio.css": "src/studio/client/studio.css",
-            "/LICENSE-OFL": "LICENSE-OFL",
-          }[url.pathname];
+          const file = STATIC_FILES[url.pathname];
           if (file)
-            return new Response(await readFile(join(root, file)), {
+            return new Response(await readFile(join(root, file[0])), {
               headers: {
                 ...HEADERS,
-                "Content-Type": file.endsWith(".html")
-                  ? "text/html; charset=utf-8"
-                  : file.endsWith(".css")
-                    ? "text/css; charset=utf-8"
-                    : "text/plain; charset=utf-8",
+                "Content-Type": file[1],
               },
             });
           return new Response("Not Found", { status: 404, headers: HEADERS });
