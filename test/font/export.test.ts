@@ -99,6 +99,7 @@ function inspectPackage(result: ColorFontExportResult, input: ColorFontExportOpt
     complete: true,
     schemaVersion: 1,
     format: "hangul-palette-color-font-v1",
+    fontFormat: "WOFF2 / CFF / COLR v1 with v0 fallback / CPAL v0",
     family: "Hangul Palette",
     fontVersion: FONT_VERSION,
     colorPolicy: { fontDefault: "#000000", selectedPalette: "css-only" },
@@ -245,6 +246,15 @@ function inspectPackage(result: ColorFontExportResult, input: ColorFontExportOpt
     expect(Object.values(report.originalPreservation).every((passed) => passed === true)).toBe(true);
     expect(report.encodedCOLRLayers).toBeGreaterThan(0);
     expect(report.encodedCOLRLayers).toBeLessThanOrEqual(65535);
+    expect(report.colorLayers).toMatchObject({
+      colrVersion: 1,
+      v0Glyphs: 11223,
+      v1Glyphs: 11223,
+      v0LayerRecords: report.encodedCOLRLayers,
+      v0FallbackMatchesV1: true,
+    });
+    expect(report.colorLayers.v1LayerRecords).toBeGreaterThan(0);
+    expect(report.colorLayers.v1LayerReferences).toBe(report.checks.decodedRegionOutlines);
     expect(report.fontGlyphs).toBeLessThanOrEqual(65535);
     expect(report.maximumDecodedCoordinateError).toBeLessThanOrEqual(report.decodedCoordinateTolerance);
     expect(report.decodedGeometryProof).toBe("matching-cubic-topology-and-bounded-control-points");
@@ -433,6 +443,7 @@ from pathlib import Path
 from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables.otTables import PaintFormat
 
 folder, version = Path(sys.argv[1]), sys.argv[2]
 pins = json.loads(Path(sys.argv[3]).read_text())["files"]
@@ -455,6 +466,42 @@ def records(glyph):
     pen = RecordingPen()
     glyph.draw(pen)
     return pen.value
+
+def decoded_color_layers(font):
+    # Independent decoding from the shipped binary, without compiler helpers or
+    # success flags: both representations must paint the same ordered layers.
+    assert font["COLR"].version == 1
+    table = font["COLR"].table
+    base_records = table.BaseGlyphRecordArray.BaseGlyphRecord
+    layer_records = table.LayerRecordArray.LayerRecord
+    assert table.BaseGlyphRecordCount == len(base_records) == 11223
+    assert table.LayerRecordCount == len(layer_records)
+    legacy = {}
+    for item in base_records:
+        assert item.BaseGlyph not in legacy and item.NumLayers > 0
+        layers = layer_records[item.FirstLayerIndex:item.FirstLayerIndex + item.NumLayers]
+        assert len(layers) == item.NumLayers
+        legacy[item.BaseGlyph] = [(layer.LayerGlyph, layer.PaletteIndex) for layer in layers]
+    modern_records = table.BaseGlyphList.BaseGlyphPaintRecord
+    assert table.BaseGlyphList.BaseGlyphCount == len(modern_records) == 11223
+    assert table.LayerList.LayerCount == len(table.LayerList.Paint) > 0
+    def flatten(paint, ancestors=frozenset()):
+        assert id(paint) not in ancestors
+        ancestors = ancestors | {id(paint)}
+        if paint.Format == PaintFormat.PaintColrLayers:
+            assert paint.NumLayers > 0
+            children = table.LayerList.Paint[paint.FirstLayerIndex:paint.FirstLayerIndex + paint.NumLayers]
+            assert len(children) == paint.NumLayers
+            return [layer for child in children for layer in flatten(child, ancestors)]
+        assert paint.Format == PaintFormat.PaintGlyph
+        assert paint.Paint.Format == PaintFormat.PaintSolid and paint.Paint.Alpha == 1.0
+        return [(paint.Glyph, paint.Paint.PaletteIndex)]
+    modern = {}
+    for item in modern_records:
+        assert item.BaseGlyph not in modern
+        modern[item.BaseGlyph] = flatten(item.Paint)
+    assert modern == legacy
+    return modern
 
 summary, areas = {}, []
 for profile in profiles:
@@ -523,24 +570,24 @@ for profile in profiles:
         assert ("vmtx" in font) == ("vmtx" in original)
         assert all(font["hmtx"][cmap[code]][0] == 1770 for code in expected)
         assert len({font["hmtx"][cmap[ord(char)]][0] for char in "iW1! "}) > 1
-        assert font["COLR"].version == 0 and font["CPAL"].version == 0
+        assert font["COLR"].version == 1 and font["CPAL"].version == 0
         assert font["CPAL"].numPaletteEntries == 20 and len(font["CPAL"].palettes) == 1
         assert [(c.red, c.green, c.blue, c.alpha) for c in font["CPAL"].palettes[0]] == [(0, 0, 0, 255)] * 20
-        colored = font["COLR"].ColorLayers
+        colored = decoded_color_layers(font)
         assert len(colored) == 11223 and set(colored) == {cmap[code] for code in expected}
         mapped = {code for code, name in cmap.items() if name in colored}
         aliases = mapped - expected
         assert len(mapped) == 11274 and len(aliases) == 51 and all(0xFFA0 <= code <= 0xFFDC for code in aliases)
         assert all(cmap[ord(char)] not in colored for char in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!?.,()[] ")
-        assert {layer.colorID for layers in colored.values() for layer in layers} == set(range(20))
+        assert {slot for layers in colored.values() for _, slot in layers} == set(range(20))
         layer_records = struct.unpack(">HHIIH", font.reader["COLR"][:14])[-1]
         assert 0 < layer_records <= 65535
-        assert all(layer.name in output_names and 0 <= layer.colorID < 20
-                   for layers in colored.values() for layer in layers)
+        assert all(name in output_names and 0 <= slot < 20
+                   for layers in colored.values() for name, slot in layers)
         for char, branch, stem in (("ㅏ", 5, 3), ("ㅗ", 3, 4), ("ㅋ", 2, 0), ("몋", 6, 3), ("몋", 7, 3)):
-            slots = [layer.colorID for layer in colored[cmap[ord(char)]]]
+            slots = [slot for _, slot in colored[cmap[ord(char)]]]
             assert slots.index(branch) < slots.index(stem), (identity, char, slots)
-        assert [layer.colorID for layer in colored[cmap[ord("가")]]] == [5, 3, 0]
+        assert [slot for _, slot in colored[cmap[ord("가")]]] == [5, 3, 0]
         generated_glyphs, original_glyphs = font.getGlyphSet(), original.getGlyphSet()
         for name in order:
             assert records(generated_glyphs[name]) == records(original_glyphs[name]), (identity, name, "decoded outline")
@@ -554,7 +601,8 @@ for profile in profiles:
                              "addedRegionGlyphs": len(output_order) - len(order), "mappedCharacters": len(cmap),
                              "coloredGlyphs": len(colored), "coloredMappedCharacters": len(mapped),
                              "halfwidthAliases": len(aliases), "encodedCOLRLayers": layer_records,
-                             "weight": weight, "originalDataAndMetricsPreserved": True, "blackPalette": True}
+                             "weight": weight, "originalDataAndMetricsPreserved": True, "blackPalette": True,
+                             "modernAndLegacyPaintSequencesMatch": True}
 assert len(areas) == 9 and all(a < b for a, b in zip(areas, areas[1:])), areas
 print(json.dumps(summary))
 `;
@@ -594,6 +642,7 @@ print(json.dumps(summary))
           weight: number;
           originalDataAndMetricsPreserved: boolean;
           blackPalette: boolean;
+          modernAndLegacyPaintSequencesMatch: boolean;
         }
       >;
       expect(Object.keys(independent).sort()).toEqual(weights.map(({ id }) => id).sort());
@@ -608,6 +657,7 @@ print(json.dumps(summary))
           weight,
           originalDataAndMetricsPreserved: true,
           blackPalette: true,
+          modernAndLegacyPaintSequencesMatch: true,
         });
       }
 

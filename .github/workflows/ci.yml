@@ -44,7 +44,7 @@ jobs:
   color-fonts:
     name: Nine color weights and reproducible packages
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -69,4 +69,5 @@ jobs:
       - name: Run complete test suite and font integration checks
         env:
           STUDIO_FONT_INTEGRATION: "1"
+          STUDIO_FONT_TEST_OUTPUT: .cache/ci/font-output
         run: bun test

@@ -1,4 +1,4 @@
-"""Add COLR v0 semantic layers to the pinned official static Pretendard OTFs.
+"""Add matching COLR v1 paints and v0 fallback layers to pinned static OTFs.
 
 The official glyphs remain the monochrome fallback. Their charstrings, CFF
 private data, subroutines, cmap bytes, glyph IDs and metrics are retained; only
@@ -20,7 +20,7 @@ import struct
 
 import pathops
 from fontTools.cffLib import FontDict, PrivateDict, PrivateDictCompiler
-from fontTools.colorLib.builder import buildCOLR, buildCPAL
+from fontTools.colorLib.builder import buildCOLR, buildCPAL, populateCOLRv0
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.basePen import BasePen
 from fontTools.pens.pointInsidePen import PointInsidePen
@@ -30,11 +30,13 @@ from fontTools.pens.transformPen import TransformPen
 from fontTools.svgLib.path import parse_path
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables.DefaultTable import DefaultTable
+from fontTools.ttLib.tables.otTables import PaintFormat
 
 from weights import PROFILES
 
 HERE = Path(__file__).resolve().parent
 FAMILY = "Hangul Palette"
+COLOR_FONT_FORMAT = "WOFF2 / CFF / COLR v1 with v0 fallback / CPAL v0"
 SOURCE_UPM = 2896
 MASK_GUARD = 3.0
 MASK_GUARD_CANDIDATES = (3.0, 3.125, 3.25, 3.5, 4.0)
@@ -52,6 +54,143 @@ class OfficialFontError(Exception):
     def __init__(self, code, message, diagnostics=None):
         super().__init__(message)
         self.code, self.diagnostics = code, diagnostics or []
+
+
+def build_color_layers(color_glyphs, glyph_map):
+    """Encode one opaque paint sequence twice, for modern and legacy clients."""
+    paints = {
+        base: {"Format": PaintFormat.PaintColrLayers,
+               "Layers": [{"Format": PaintFormat.PaintGlyph, "Glyph": name,
+                           "Paint": {"Format": PaintFormat.PaintSolid,
+                                     "PaletteIndex": index, "Alpha": 1.0}}
+                          for name, index in layers]}
+        for base, layers in color_glyphs.items()
+    }
+    table = buildCOLR(paints, version=1, glyphMap=glyph_map)
+    populateCOLRv0(table.table, color_glyphs, glyph_map)
+    return table
+
+
+def _color_layer_data(font):
+    """Decode both representations and reject anything outside our paint model."""
+    def require(condition, message):
+        if not condition:
+            raise OfficialFontError("font_validation", message)
+
+    def integer(value, minimum, maximum):
+        return type(value) is int and minimum <= value <= maximum
+
+    try:
+        require("COLR" in font and "CPAL" in font, "COLR and CPAL tables are required.")
+        require(font["COLR"].version == 1 and font["CPAL"].version == 0,
+                "COLR v1 with v0 fallback and CPAL v0 are required.")
+        table = font["COLR"].table
+        require(table.Version == 1, "The COLR header must declare version 1.")
+        require(all(getattr(table, field, None) is None for field in ("ClipList", "VarIndexMap", "VarStore")),
+                "Color layers must not contain clipping or variation subtables.")
+        palette_entries = font["CPAL"].numPaletteEntries
+        require(integer(palette_entries, 1, 65535), "The CPAL entry count is invalid.")
+        glyph_map = font.getReverseGlyphMap()
+        bases = table.BaseGlyphRecordArray.BaseGlyphRecord
+        records = table.LayerRecordArray.LayerRecord
+        require(integer(table.BaseGlyphRecordCount, 1, 65535) and
+                table.BaseGlyphRecordCount == len(bases) and
+                integer(table.LayerRecordCount, 1, 65535) and table.LayerRecordCount == len(records),
+                "Complete COLR v0 fallback records are required.")
+        for layer in records:
+            require(layer.LayerGlyph in glyph_map and integer(layer.PaletteIndex, 0, palette_entries - 1),
+                    "A fallback layer references an invalid glyph or palette entry.")
+        legacy, previous = {}, -1
+        for base in bases:
+            require(base.BaseGlyph in glyph_map and glyph_map[base.BaseGlyph] > previous,
+                    "Fallback base glyphs must be unique and ordered by glyph ID.")
+            previous = glyph_map[base.BaseGlyph]
+            first, count = base.FirstLayerIndex, base.NumLayers
+            require(integer(first, 0, len(records) - 1) and integer(count, 1, 65535) and
+                    first + count <= len(records), "A fallback layer slice is out of bounds.")
+            legacy[base.BaseGlyph] = [(layer.LayerGlyph, layer.PaletteIndex)
+                                      for layer in records[first:first + count]]
+
+        modern = table.BaseGlyphList
+        layer_list = table.LayerList
+        paints = layer_list.Paint if layer_list is not None else []
+        require(integer(modern.BaseGlyphCount, 1, 65535) and
+                modern.BaseGlyphCount == len(modern.BaseGlyphPaintRecord) == len(legacy),
+                "Every fallback glyph requires an actual COLR v1 paint.")
+        require(layer_list is None or (integer(layer_list.LayerCount, 1, 0xffffffff) and
+                                      layer_list.LayerCount == len(paints)),
+                "The COLR v1 layer list is invalid.")
+        limit = max(map(len, legacy.values()))
+        expanded, heights, active = {}, {}, set()
+
+        def expand(paint, depth=0):
+            identity = id(paint)
+            require(identity not in active and depth <= 64, "A color paint graph is cyclic or too deep.")
+            if identity in expanded:
+                require(depth + heights[identity] <= 64, "A color paint graph is too deep.")
+                return expanded[identity]
+            active.add(identity)
+            try:
+                if paint.Format == PaintFormat.PaintColrLayers:
+                    first, count = paint.FirstLayerIndex, paint.NumLayers
+                    require(integer(first, 0, len(paints) - 1) and integer(count, 1, 255) and
+                            first + count <= len(paints), "A COLR v1 layer slice is out of bounds.")
+                    result, height = [], 0
+                    for child in paints[first:first + count]:
+                        result.extend(expand(child, depth + 1))
+                        height = max(height, 1 + heights[id(child)])
+                        require(len(result) <= limit, "A paint sequence exceeds its fallback layer count.")
+                else:
+                    require(paint.Format == PaintFormat.PaintGlyph and paint.Glyph in glyph_map,
+                            "Only layer lists and valid glyph paints are supported.")
+                    fill = paint.Paint
+                    require(fill.Format == PaintFormat.PaintSolid and fill.Alpha == 1.0 and
+                            integer(fill.PaletteIndex, 0, palette_entries - 1),
+                            "Each layer requires an opaque solid palette color.")
+                    result = [(paint.Glyph, fill.PaletteIndex)]
+                    height = 0
+                require(depth + height <= 64, "A color paint graph is too deep.")
+                heights[identity] = height
+                expanded[identity] = tuple(result)
+                return expanded[identity]
+            finally:
+                active.remove(identity)
+
+        # Validate even shared or unused layer-list entries, never just roots.
+        for paint in paints:
+            expand(paint)
+        previous, seen = -1, set()
+        for base in modern.BaseGlyphPaintRecord:
+            name = base.BaseGlyph
+            require(name in legacy and glyph_map[name] > previous,
+                    "COLR v1 base glyphs must match the ordered fallback glyphs.")
+            previous = glyph_map[name]
+            # FontTools collapses a one-layer list into its glyph paint.
+            require(base.Paint.Format == PaintFormat.PaintColrLayers or
+                    (len(legacy[name]) == 1 and base.Paint.Format == PaintFormat.PaintGlyph),
+                    "Each colored glyph requires a COLR v1 layer sequence.")
+            require(list(expand(base.Paint)) == legacy[name],
+                    "COLR v1 glyphs, palette entries or paint order differ from the v0 fallback.")
+            seen.add(name)
+        require(seen == set(legacy), "COLR v1 and fallback coverage differ.")
+        audit = {"colrVersion": 1, "v0Glyphs": len(legacy), "v0LayerRecords": len(records),
+                 "v1Glyphs": len(seen), "v1LayerRecords": len(paints),
+                 "v1LayerReferences": sum(map(len, legacy.values())), "v0FallbackMatchesV1": True}
+        return legacy, audit
+    except OfficialFontError:
+        raise
+    except Exception as error:
+        raise OfficialFontError("font_validation", "Cannot decode matching modern and fallback color layers.") from error
+
+
+def color_layer_sequences(font):
+    """Return base -> [(glyph, palette index)] after verifying both color formats."""
+    return _color_layer_data(font)[0]
+
+
+def color_layer_audit(font):
+    """Record the decoded modern/fallback coverage and their exact equivalence."""
+    return _color_layer_data(font)[1]
 
 
 def _sha(data):
@@ -412,7 +551,7 @@ def _check_allocation_ownership(layers, pieces, expected_pieces, allocation):
             point = (x0 + (x1 - x0) * (x + 0.381966) / 33,
                      y0 + (y1 - y0) * (y + 0.618034) / 33)
             for slot in (allocation["slot"], 0):
-                actual = any(_inside(pieces[layer.name], point) for layer in layers if layer.colorID == slot)
+                actual = any(_inside(pieces[name], point) for name, color in layers if color == slot)
                 expected = any(_inside(piece, point) for color, piece in expected_pieces if color == slot)
                 if actual != expected:
                     raise ValueError(f"The calibrated vowel corner or adjacent initial curve changed at {point}.")
@@ -508,7 +647,7 @@ def build_official_font(glyphs, contract, profile, official_bytes):
     raw_cmap.data = cmap_bytes
     font["cmap"] = raw_cmap
     _rename(font, contract, profile)
-    font["COLR"] = buildCOLR(colored, version=0, glyphMap=font.getReverseGlyphMap())
+    font["COLR"] = build_color_layers(colored, font.getReverseGlyphMap())
     font["CPAL"] = buildCPAL([[(0.0, 0.0, 0.0, 1.0)] * len(contract["slots"])])
     font.flavor = "woff2"
     output = io.BytesIO()
@@ -550,8 +689,7 @@ def validate_official_font(data, official_bytes, glyphs, contract, profile):
                                      for key, passed in checks.items() if not passed])
         for tag in generated.keys():
             generated[tag]
-        if generated["COLR"].version != 0 or generated["CPAL"].version != 0:
-            raise OfficialFontError("font_validation", "COLR v0 / CPAL v0 are required.")
+        colored, color_audit = _color_layer_data(generated)
         if (generated["name"].getDebugName(1) != FAMILY or generated["name"].getDebugName(2) != profile.label or
             generated["name"].getDebugName(6) != "HangulPalette-" + profile.label or
             generated["name"].getDebugName(5) != name_version or
@@ -564,7 +702,6 @@ def validate_official_font(data, official_bytes, glyphs, contract, profile):
             (color.red, color.green, color.blue, color.alpha) != (0, 0, 0, 255) for color in palettes.palettes[0]):
             raise OfficialFontError("font_validation", "The default palette must contain opaque black semantic slots.")
         cmap = generated.getBestCmap()
-        colored = generated["COLR"].ColorLayers
         if set(colored) != {cmap[ord(glyph["char"])] for glyph in glyphs}:
             raise OfficialFontError("font_validation", "The decoded colored character set differs.")
         glyphset, original_glyphset = generated.getGlyphSet(), original.getGlyphSet()
@@ -587,7 +724,7 @@ def validate_official_font(data, official_bytes, glyphs, contract, profile):
                 layers = colored[base]
                 expected_slots = [region["slot"] for index, region in enumerate(glyph["regions"])
                                   if index == 0 or glyph["regions"][index - 1]["slot"] != region["slot"]]
-                if [layer.colorID for layer in layers] != expected_slots:
+                if [color for _, color in layers] != expected_slots:
                     raise ValueError("Decoded palette slots or source paint priority changed.")
                 official = _glyph_path(original_glyphset[base])
                 expected_pieces, partition_audit = _partition(official, glyph["regions"], generated["head"].unitsPerEm / SOURCE_UPM, char, profile.id)
@@ -602,14 +739,14 @@ def validate_official_font(data, official_bytes, glyphs, contract, profile):
                 if radius != MASK_GUARD:
                     retries.append({"char": char, "guardUnits": radius})
                 maximum_pre_encode = max(maximum_pre_encode, partition_audit["xorArea"])
-                for layer, (_, expected_piece) in zip(layers, expected_pieces, strict=True):
-                    if layer.name not in decoded:
-                        decoded[layer.name] = _glyph_path(glyphset[layer.name], simplify=False)
-                    piece = decoded[layer.name]
+                for (name, _), (_, expected_piece) in zip(layers, expected_pieces, strict=True):
+                    if name not in decoded:
+                        decoded[name] = _glyph_path(glyphset[name], simplify=False)
+                    piece = decoded[name]
                     maximum_coordinate = max(maximum_coordinate, _coordinate_error(piece, expected_piece))
                 detailed = char in "가값과밖휺쌀썰쐆괬딨폈클콥닄핝랬떴멕챘셱" or ord(char) % 97 == 0
                 counts["independentFilledPoints"] += _check_filled_points(
-                    original_glyphset[base], [decoded[layer.name] for layer in layers], official.bounds,
+                    original_glyphset[base], [decoded[name] for name, _ in layers], official.bounds,
                     17 if detailed else 3)
                 counts["independentFilledPointCharacters"] += 1
                 for allocation in partition_audit["officialFillAllocations"]:
@@ -627,6 +764,7 @@ def validate_official_font(data, official_bytes, glyphs, contract, profile):
                 "originalPreservation": checks, "officialSha256": _sha(official_bytes),
                 "characters": len(glyphs), "fontGlyphs": generated["maxp"].numGlyphs,
                 "originalGlyphs": len(before["order"]), "encodedCOLRLayers": layer_records,
+                "colorLayers": color_audit,
                 "originalCmapCharacters": len(cmap), "sourceLayerOrderPreserved": True,
                 "compoundHolesPreserved": True, "allRegionAndFallbackOutlinesDecoded": True,
                 "defaultPaletteBlack": True, "weight": profile.weight, "weightName": profile.label,

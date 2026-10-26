@@ -20,7 +20,9 @@ Follow the [README](../README.md#run) to install dependencies and start Studio.
 
 The production path is **source → validated font build → palette package**. Both Studio and the release command use [`buildFont()` and `packageFont()`](../src/font/build.ts).
 
-Each weight starts from its corresponding official static OTF, verified against [the pinned original-font hashes](../src/font/compiler/official-sources.json). The compiler retains the original glyphs, character mapping and placement metrics. Semantic masks come from the production Regular geometry and separately extracted geometry for the other weights. They are scaled into the official font's coordinates, clipped to its filled outlines and appended as color layers using CFF, COLR v0 and CPAL v0.
+Each weight starts from its corresponding official static OTF, verified against [the pinned original-font hashes](../src/font/compiler/official-sources.json). The compiler retains the original glyphs, character mapping and placement metrics. Semantic masks come from the production Regular geometry and separately extracted geometry for the other weights. They are scaled into the official font's coordinates, clipped to its filled outlines and appended as CFF color layers, with CPAL v0 palettes.
+
+Each WOFF2 contains COLR v1 paints and matching COLR v0 fallback layers. Chromium uses its Fontations backend for COLR v1 on Windows, avoiding the [DirectWrite palette crash](https://github.com/brave/brave-browser/issues/59300); Safari renders the v0 fallback. Validation requires both representations to contain the same glyphs, palette indices and paint order. Keep the CSS source as `format("woff2")` without `tech(color-COLRv1)`, which would exclude Safari despite its fallback support.
 
 A build ID covers geometry, ordered region assignments, compiler inputs and toolchain. Validated builds live in `.cache/font-builds/`; reuse verifies the identity, archive hashes, source pins and recorded font validation. A missing, damaged or incompatible cache requires a new build.
 

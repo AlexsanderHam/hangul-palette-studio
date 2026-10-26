@@ -10,6 +10,7 @@ import zipfile
 
 from fontTools.ttLib import TTFont
 
+from official import COLOR_FONT_FORMAT, color_layer_audit, color_layer_sequences
 from export import (EXPECTED, FAMILY, HERE, METRICS, PROFILES, ExportError, check_runtime, configure_stdio,
                     effective_slots, emit, encoded, font_version, make_package, require_assignment_format, sha, toolchain)
 from regions import ASSIGNMENT_FORMAT
@@ -48,7 +49,8 @@ def verified_package(data, payload, contract):
                 manifest.get("classificationFormat") == ASSIGNMENT_FORMAT and
                 manifest.get("family") == FAMILY and manifest.get("complete") is True,
                 "검증을 마친 Hangul Palette ZIP이 필요합니다.")
-        require(manifest.get("colorPolicy") == {"fontDefault": "#000000", "selectedPalette": "css-only"} and
+        require(manifest.get("fontFormat") == COLOR_FONT_FORMAT and
+                manifest.get("colorPolicy") == {"fontDefault": "#000000", "selectedPalette": "css-only"} and
                 manifest.get("verification") == {"structural": True, "decodedOutlines": True},
                 "기존 폰트의 기본색과 윤곽 검증 기록을 확인할 수 없습니다.")
         require(manifest.get("counts") == {"characters": 11223, "modernSyllables": 11172,
@@ -119,18 +121,21 @@ def verified_package(data, payload, contract):
             with TTFont(io.BytesIO(font), lazy=True) as opened:
                 cmap = opened.getBestCmap()
                 colored = {cmap.get(ord(char)) for char in EXPECTED}
+                layers = color_layer_sequences(opened)
+                color_audit = color_layer_audit(opened)
                 require(opened.flavor == "woff2" and "CFF " in opened and "COLR" in opened and "CPAL" in opened and
-                        opened["COLR"].version == 0 and opened["CPAL"].version == 0 and
+                        opened["COLR"].version == 1 and opened["CPAL"].version == 0 and
                         opened["OS/2"].usWeightClass == profile.weight and
                         opened["head"].unitsPerEm == METRICS["unitsPerEm"] and
                         opened["hhea"].ascent == METRICS["ascender"] and opened["hhea"].descent == METRICS["descender"] and
                         len(cmap) == FONT_COVERAGE["mappedCharacters"] and None not in colored and
-                        set(opened["COLR"].ColorLayers) == colored and
+                        set(layers) == colored and
                         sum(name in colored for name in cmap.values()) == FONT_COVERAGE["coloredMappedCharacters"] and
                         len(opened.getGlyphOrder()) >= FONT_COVERAGE["originalGlyphs"] and
                         report.get("fontGlyphs") == opened["maxp"].numGlyphs and
                         report.get("encodedCOLRLayers") == int.from_bytes(opened.reader["COLR"][12:14], "big") and
-                        decoded_checks.get("decodedRegionOutlines") == sum(len(layers) for layers in opened["COLR"].ColorLayers.values()) and
+                        report.get("colorLayers") == color_audit and
+                        decoded_checks.get("decodedRegionOutlines") == sum(map(len, layers.values())) and
                         all(opened["hmtx"][name][0] == METRICS["hangulAdvanceWidth"] for name in colored),
                         "기존 WOFF2의 문자 범위나 굵기가 올바르지 않습니다: " + profile.id)
                 palette = opened["CPAL"]

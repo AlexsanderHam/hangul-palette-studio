@@ -34,7 +34,7 @@ from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.svgLib.path import parse_path
 
-from official import (OfficialFontError, build_official_font, decode_official_fonts,
+from official import (COLOR_FONT_FORMAT, OfficialFontError, build_official_font, decode_official_fonts,
                       font_version as official_font_version, validate_official_font)
 from regions import ASSIGNMENT_FORMAT, FEATURES as REGION_FEATURES, resolve_glyph_regions
 from weights import PROFILES, source_profile
@@ -333,7 +333,7 @@ def make_package(payload, contract, compiled, license_bytes, slots):
     manifest = {"schemaVersion": 1, "format": "hangul-palette-color-font-v1", "family": FAMILY,
                 "classificationFormat": ASSIGNMENT_FORMAT,
                 "fontVersion": version,
-                "fontFormat": "WOFF2 / CFF / COLR v0 / CPAL v0", "complete": True,
+                "fontFormat": COLOR_FONT_FORMAT, "complete": True,
                 "project": payload["project"], "metrics": METRICS, "semanticSourceMetrics": SOURCE_METRICS,
                 "outlinePolicy": "official-static-font-with-clipped-semantic-layers",
                 "inputs": {**regular["inputs"], "paletteSha256": sha(encoded([slot["color"] for slot in slots]))},

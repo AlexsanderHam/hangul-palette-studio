@@ -14,7 +14,7 @@ const python = join(
 const runIntegration = process.env.STUDIO_FONT_INTEGRATION === "1";
 
 test.skipIf(!runIntegration)(
-  "official COLR v0 compiler preserves originals deterministically and respects changed region paint order",
+  "official COLR v1 compiler preserves originals and matching legacy layers deterministically with changed paint order",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "studio-official-color-font-"));
     try {
@@ -55,7 +55,7 @@ import base64, copy, io, json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / "src/font/compiler"))
 from regions import resolve_glyph_regions
-from official import OfficialFontError, build_official_font, validate_official_font, _partition, _glyph_path, _check_filled_points, _coordinate_error, _inside
+from official import OfficialFontError, build_official_font, validate_official_font, color_layer_sequences, _partition, _glyph_path, _check_filled_points, _coordinate_error, _inside
 from export import validate_semantics
 from weights import PROFILES
 from fontTools.ttLib import TTFont
@@ -98,10 +98,10 @@ for identity in ["regular", "black"]:
         with TTFont(io.BytesIO(first)) as before, TTFont(io.BytesIO(edited)) as after:
             def corner_owners(font):
                 glyphset = font.getGlyphSet()
-                layers = font["COLR"].ColorLayers[font.getBestCmap()[ord("셱")]]
+                layers = color_layer_sequences(font)[font.getBestCmap()[ord("셱")]]
                 return [slot for slot in (0, 6, 7) if any(
-                    _inside(_glyph_path(glyphset[layer.name], simplify=False), (930, 874))
-                    for layer in layers if layer.colorID == slot)]
+                    _inside(_glyph_path(glyphset[name], simplify=False), (930, 874))
+                    for name, index in layers if index == slot)]
             assert corner_owners(before) == [7] and corner_owners(after) == [6]
     else:
         assert verification["officialFillAllocations"] == []
@@ -120,9 +120,9 @@ for identity in ["regular", "black"]:
             point = (1000 * 2048 / 2896, 1600 * 2048 / 2896)
             def colored_at(font, slot):
                 glyphset = font.getGlyphSet()
-                layers = font["COLR"].ColorLayers[font.getBestCmap()[ord("ㅋ")]]
-                return any(_inside(_glyph_path(glyphset[layer.name], simplify=False), point)
-                           for layer in layers if layer.colorID == slot)
+                layers = color_layer_sequences(font)[font.getBestCmap()[ord("ㅋ")]]
+                return any(_inside(_glyph_path(glyphset[name], simplify=False), point)
+                           for name, index in layers if index == slot)
             assert colored_at(before, 0) and not colored_at(before, 2)
             assert colored_at(after, 2) and not colored_at(after, 0)
     changed = copy.deepcopy(glyphs)
@@ -133,8 +133,8 @@ for identity in ["regular", "black"]:
     validate_official_font(different, source, changed, contract, profile)
     with TTFont(io.BytesIO(first)) as a, TTFont(io.BytesIO(different)) as b:
         name = a.getBestCmap()[ord("가")]
-        assert [layer.colorID for layer in a["COLR"].ColorLayers[name]] == list(reversed(
-            [layer.colorID for layer in b["COLR"].ColorLayers[name]]))
+        assert [slot for _, slot in color_layer_sequences(a)[name]] == list(reversed(
+            [slot for _, slot in color_layer_sequences(b)[name]]))
     try:
         build_official_font(glyphs, contract, profile, source[:-1] + bytes([source[-1] ^ 1]))
     except OfficialFontError as error:
@@ -178,8 +178,8 @@ for identity, chars in [("extra-light", "휅"), ("bold", "뭫붷쉏웧줳퀗풯�
         source_glyphs, output_glyphs = original.getGlyphSet(), decoded.getGlyphSet()
         for char in chars:
             base = decoded.getBestCmap()[ord(char)]
-            pieces = [_glyph_path(output_glyphs[layer.name], simplify=False)
-                      for layer in decoded["COLR"].ColorLayers[base]]
+            pieces = [_glyph_path(output_glyphs[name], simplify=False)
+                      for name, _ in color_layer_sequences(decoded)[base]]
             assert _check_filled_points(source_glyphs[base], pieces, _glyph_path(source_glyphs[base]).bounds) == 289
 # The Type 2 optimizer may merge forward collinear line runs. This preserves
 # the exact polygon; a reversal or a noncollinear intermediate point does not

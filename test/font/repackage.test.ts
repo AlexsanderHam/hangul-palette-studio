@@ -24,6 +24,7 @@ from fontTools.colorLib.builder import buildCOLR,buildCPAL
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables.DefaultTable import DefaultTable
+from fontTools.ttLib.tables.otTables import PaintFormat
 
 compiler.check_runtime()
 contract=json.loads((compiler.HERE/"contract.json").read_text())
@@ -48,7 +49,7 @@ for profile in compiler.PROFILES.values():
         private.compilerClass=official.OriginalPrivateCompiler
         raw=DefaultTable("cmap");raw.data=opened.reader["cmap"];opened["cmap"]=raw
         official._rename(opened,contract,profile)
-        opened["COLR"]=buildCOLR({cmap[ord(char)]:[(cmap[ord(char)],0)] for char in compiler.EXPECTED},version=0)
+        opened["COLR"]=official.build_color_layers({cmap[ord(char)]:[(cmap[ord(char)],0)] for char in compiler.EXPECTED},opened.getReverseGlyphMap())
         opened["CPAL"]=buildCPAL([[(0,0,0,1)]*20])
         opened.flavor="woff2"
         output=io.BytesIO();opened.save(output);font=output.getvalue()
@@ -60,19 +61,21 @@ for profile in compiler.PROFILES.values():
         glyphset=opened.getGlyphSet()
         for name in opened.getGlyphOrder():
             pen=BoundsPen(glyphset);glyphset[name].draw(pen)
+        colored=official.color_layer_sequences(opened)
         decoded_checks={"decodedOriginalGlyphs":len(before["order"]),
-                        "decodedOfficialFilledOutlines":len(opened["COLR"].ColorLayers),
-                        "sourcePaintOrders":len(opened["COLR"].ColorLayers),
-                        "decodedRegionOutlines":sum(len(layers) for layers in opened["COLR"].ColorLayers.values())}
-        coverage={"mappedCharacters":len(opened.getBestCmap()),"coloredCharacters":len(opened["COLR"].ColorLayers),
+                        "decodedOfficialFilledOutlines":len(colored),
+                        "sourcePaintOrders":len(colored),
+                        "decodedRegionOutlines":sum(len(layers) for layers in colored.values())}
+        coverage={"mappedCharacters":len(opened.getBestCmap()),"coloredCharacters":len(colored),
                   "originalGlyphs":len(before["order"]),
-                  "coloredMappedCharacters":sum(name in opened["COLR"].ColorLayers for name in opened.getBestCmap().values())}
+                  "coloredMappedCharacters":sum(name in colored for name in opened.getBestCmap().values())}
         coverage["monochromeMappedCharacters"]=coverage["mappedCharacters"]-coverage["coloredMappedCharacters"]
         report={"schemaVersion":1,"passed":True,"fontSha256":compiler.sha(font),"characters":len(compiler.EXPECTED),
                 "weight":profile.weight,"weightName":profile.label,"officialSha256":compiler.sha(official_bytes),
                 "originalPreservation":preservation,"checks":decoded_checks,"originalGlyphs":len(before["order"]),
                 "originalCmapCharacters":len(opened.getBestCmap()),"fontGlyphs":opened["maxp"].numGlyphs,
                 "encodedCOLRLayers":int.from_bytes(opened.reader["COLR"][12:14],"big"),
+                "colorLayers":official.color_layer_audit(opened),
                 "partitionReference":"official-static-otf-outline",
                 "allRegionAndFallbackOutlinesDecoded":True,"compoundHolesPreserved":preservation["charstrings"],
                 "defaultPaletteBlack":True,"sourceLayerOrderPreserved":True}
@@ -159,13 +162,31 @@ for field,value in (("officialSource",None),("fontCoverage",{"mappedCharacters":
 modified=dict(files);manifest=json.loads(modified["manifest.json"])
 manifest["weights"][3]["officialSource"]["sha256"]="0"*64
 modified["manifest.json"]=compiler.encoded(manifest);refuses(repack(modified))
-for field,value in (("schemaVersion",99),("originalPreservation",{}),("checks",{}),("officialSha256","0"*64)):
+for field,value in (("schemaVersion",99),("originalPreservation",{}),("checks",{}),("officialSha256","0"*64),("colorLayers",{})):
     modified=dict(files);report=json.loads(modified["validation.json"])
     report["weights"]["regular"][field]=value
     modified["validation.json"]=compiler.encoded(report);update_manifest(modified);refuses(repack(modified))
 modified=dict(files);report=json.loads(modified["validation.json"])
 report["weights"]["regular"]["originalPreservation"]["charstrings"]=False
 modified["validation.json"]=compiler.encoded(report);update_manifest(modified);refuses(repack(modified))
+# Rehash a readable font and all package metadata after replacing either color
+# representation. Trusting the success flags or hashes alone would accept it.
+for mutation in ("legacy-only", "modern-palette-mismatch"):
+    modified=dict(files)
+    with TTFont(io.BytesIO(modified["hangul-palette-regular.woff2"])) as opened:
+        if mutation=="legacy-only":
+            opened["COLR"]=buildCOLR(official.color_layer_sequences(opened),version=0,glyphMap=opened.getReverseGlyphMap())
+        else:
+            table=opened["COLR"].table
+            paint=table.BaseGlyphList.BaseGlyphPaintRecord[0].Paint
+            while paint.Format==PaintFormat.PaintColrLayers:
+                paint=table.LayerList.Paint[paint.FirstLayerIndex]
+            assert paint.Format==PaintFormat.PaintGlyph and paint.Paint.Format==PaintFormat.PaintSolid
+            paint.Paint.PaletteIndex=1
+        target=io.BytesIO();opened.save(target);modified["hangul-palette-regular.woff2"]=target.getvalue()
+    report=json.loads(modified["validation.json"])
+    report["weights"]["regular"]["fontSha256"]=compiler.sha(modified["hangul-palette-regular.woff2"])
+    modified["validation.json"]=compiler.encoded(report);update_manifest(modified);refuses(repack(modified))
 # Retain claimed provenance and update all hashes, but actually drop Latin A.
 # The independent container check still has to reject the altered coverage.
 modified=dict(files)
@@ -175,12 +196,12 @@ with TTFont(io.BytesIO(modified["hangul-palette-regular.woff2"])) as opened:
     target=io.BytesIO();opened.save(target);modified["hangul-palette-regular.woff2"]=target.getvalue()
 report=json.loads(modified["validation.json"]);report["weights"]["regular"]["fontSha256"]=compiler.sha(modified["hangul-palette-regular.woff2"])
 modified["validation.json"]=compiler.encoded(report);update_manifest(modified);refuses(repack(modified))
-print(json.dumps({"weights":len(retained),"fontsByteExact":True,"rejected":23}))
+print(json.dumps({"weights":len(retained),"fontsByteExact":True,"rejected":26}))
 `;
     const result = Bun.spawnSync([python, "-c", script], { cwd: root, timeout: 150_000 });
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout.toString())).toEqual({ weights: 9, fontsByteExact: true, rejected: 23 });
+    expect(JSON.parse(result.stdout.toString())).toEqual({ weights: 9, fontsByteExact: true, rejected: 26 });
   },
   180_000,
 );
