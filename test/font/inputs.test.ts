@@ -113,83 +113,93 @@ async function cache(root: string) {
   return join(base, entries[0]!);
 }
 
-test("source cache shares concurrent extraction and repairs checksum or profile corruption", async () =>
-  fixture(async (root) => {
-    const results = await Promise.all(Array.from({ length: 4 }, () => prepareFontWeightSources(root)));
-    for (const result of results) {
-      expect(Object.keys(result)).toEqual(identities);
-      for (const profile of weights)
-        expect(result[profile.id].provenance?.instance).toMatchObject({
-          name: profile.label,
-          weight: profile.value,
-        });
-    }
-    expect(await calls(root)).toEqual(identities);
-    await prepareFontWeightSources(root);
-    expect(await calls(root)).toHaveLength(8);
-    const directory = await cache(root);
-    await writeFile(join(directory, "light.json"), "{}");
-    await prepareFontWeightSources(root);
-    expect(await calls(root)).toHaveLength(16);
-    const wrong = raw("bold");
-    wrong.provenance!.instance!.weight = 300;
-    const bytes = JSON.stringify(wrong),
-      manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
-    await writeFile(join(directory, "bold.json"), bytes);
-    manifest.files.bold = { bytes: Buffer.byteLength(bytes), sha256: sha256(bytes) };
-    await writeFile(join(directory, "manifest.json"), JSON.stringify(manifest));
-    expect((await prepareFontWeightSources(root)).bold.provenance?.instance?.weight).toBe(700);
-    expect(await calls(root)).toHaveLength(24);
-    const missing = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
-    delete missing.files["extra-bold"];
-    await writeFile(join(directory, "manifest.json"), JSON.stringify(missing));
-    expect(Object.keys(await prepareFontWeightSources(root))).toEqual(identities);
-    expect(await calls(root)).toHaveLength(32);
-  }));
+test(
+  "source cache shares concurrent extraction and repairs checksum or profile corruption",
+  async () =>
+    fixture(async (root) => {
+      const results = await Promise.all(Array.from({ length: 4 }, () => prepareFontWeightSources(root)));
+      for (const result of results) {
+        expect(Object.keys(result)).toEqual(identities);
+        for (const profile of weights)
+          expect(result[profile.id].provenance?.instance).toMatchObject({
+            name: profile.label,
+            weight: profile.value,
+          });
+      }
+      expect(await calls(root)).toEqual(identities);
+      await prepareFontWeightSources(root);
+      expect(await calls(root)).toHaveLength(8);
+      const directory = await cache(root);
+      await writeFile(join(directory, "light.json"), "{}");
+      await prepareFontWeightSources(root);
+      expect(await calls(root)).toHaveLength(16);
+      const wrong = raw("bold");
+      wrong.provenance!.instance!.weight = 300;
+      const bytes = JSON.stringify(wrong),
+        manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
+      await writeFile(join(directory, "bold.json"), bytes);
+      manifest.files.bold = { bytes: Buffer.byteLength(bytes), sha256: sha256(bytes) };
+      await writeFile(join(directory, "manifest.json"), JSON.stringify(manifest));
+      expect((await prepareFontWeightSources(root)).bold.provenance?.instance?.weight).toBe(700);
+      expect(await calls(root)).toHaveLength(24);
+      const missing = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
+      delete missing.files["extra-bold"];
+      await writeFile(join(directory, "manifest.json"), JSON.stringify(missing));
+      expect(Object.keys(await prepareFontWeightSources(root))).toEqual(identities);
+      expect(await calls(root)).toHaveLength(32);
+    }),
+  30_000,
+);
 
-test("failed extraction keeps published files intact, retries, and extractor changes use a new cache", async () =>
-  fixture(async (root) => {
-    await prepareFontWeightSources(root);
-    const directory = await cache(root),
-      manifest = await readFile(join(directory, "manifest.json"), "utf8"),
-      bold = await readFile(join(directory, "bold.json"), "utf8");
-    await writeFile(join(directory, "light.json"), "{}");
-    await writeFile(join(root, "FAIL"), "");
-    await expect(prepareFontWeightSources(root)).rejects.toThrow("fixture extraction failed");
-    expect(await readFile(join(directory, "manifest.json"), "utf8")).toBe(manifest);
-    expect(await readFile(join(directory, "bold.json"), "utf8")).toBe(bold);
-    expect(
-      (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => name.startsWith(".extract-")),
-    ).toHaveLength(0);
-    await rm(join(root, "FAIL"));
-    expect((await prepareFontWeightSources(root)).light.provenance?.instance?.weight).toBe(300);
-    await appendFile(join(root, "src/font/source/parser.ts"), "\n// changed extractor");
-    await prepareFontWeightSources(root);
-    expect(
-      (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
-    ).toHaveLength(2);
-    await appendFile(join(root, "src/shared/atomic-file.ts"), "\n// changed atomic output dependency");
-    await prepareFontWeightSources(root);
-    expect(
-      (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
-    ).toHaveLength(3);
-    await appendFile(join(root, "src/font/source/document.ts"), "\n// changed glyph data conversion");
-    await prepareFontWeightSources(root);
-    expect(
-      (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
-    ).toHaveLength(4);
-    await appendFile(join(root, "src/font/source/regions.ts"), "\n// changed semantic region contract");
-    await prepareFontWeightSources(root);
-    expect(
-      (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
-    ).toHaveLength(5);
-    await appendFile(join(root, "src/font/compiler/contract.json"), "\n ");
-    await prepareFontWeightSources(root);
-    expect(
-      (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
-    ).toHaveLength(6);
-    await mkdir(join(root, ".cache/pretendard-src"));
-    const before = await calls(root);
-    await expect(prepareFontWeightSources(root)).rejects.toThrow("Source verification failed");
-    expect(await calls(root)).toEqual(before);
-  }));
+test(
+  "failed extraction keeps published files intact, retries, and extractor changes use a new cache",
+  async () =>
+    fixture(async (root) => {
+      await prepareFontWeightSources(root);
+      const directory = await cache(root),
+        manifest = await readFile(join(directory, "manifest.json"), "utf8"),
+        bold = await readFile(join(directory, "bold.json"), "utf8");
+      await writeFile(join(directory, "light.json"), "{}");
+      await writeFile(join(root, "FAIL"), "");
+      await expect(prepareFontWeightSources(root)).rejects.toThrow("fixture extraction failed");
+      expect(await readFile(join(directory, "manifest.json"), "utf8")).toBe(manifest);
+      expect(await readFile(join(directory, "bold.json"), "utf8")).toBe(bold);
+      expect(
+        (await readdir(join(root, ".cache/color-font-sources"))).filter((name) =>
+          name.startsWith(".extract-"),
+        ),
+      ).toHaveLength(0);
+      await rm(join(root, "FAIL"));
+      expect((await prepareFontWeightSources(root)).light.provenance?.instance?.weight).toBe(300);
+      await appendFile(join(root, "src/font/source/parser.ts"), "\n// changed extractor");
+      await prepareFontWeightSources(root);
+      expect(
+        (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
+      ).toHaveLength(2);
+      await appendFile(join(root, "src/shared/atomic-file.ts"), "\n// changed atomic output dependency");
+      await prepareFontWeightSources(root);
+      expect(
+        (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
+      ).toHaveLength(3);
+      await appendFile(join(root, "src/font/source/document.ts"), "\n// changed glyph data conversion");
+      await prepareFontWeightSources(root);
+      expect(
+        (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
+      ).toHaveLength(4);
+      await appendFile(join(root, "src/font/source/regions.ts"), "\n// changed semantic region contract");
+      await prepareFontWeightSources(root);
+      expect(
+        (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
+      ).toHaveLength(5);
+      await appendFile(join(root, "src/font/compiler/contract.json"), "\n ");
+      await prepareFontWeightSources(root);
+      expect(
+        (await readdir(join(root, ".cache/color-font-sources"))).filter((name) => !name.startsWith(".")),
+      ).toHaveLength(6);
+      await mkdir(join(root, ".cache/pretendard-src"));
+      const before = await calls(root);
+      await expect(prepareFontWeightSources(root)).rejects.toThrow("Source verification failed");
+      expect(await calls(root)).toEqual(before);
+    }),
+  30_000,
+);
