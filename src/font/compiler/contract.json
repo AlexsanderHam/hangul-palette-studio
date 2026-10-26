@@ -1,0 +1,194 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0",
+  "fontVersion": "1.0.0",
+  "slots": [
+    {
+      "id": "initial.part1.body",
+      "index": 0,
+      "label": "초성 첫째 구성 자모 · 본체",
+      "role": "initial",
+      "part": 1,
+      "feature": "body",
+      "color": "#f97373"
+    },
+    {
+      "id": "initial.part2.body",
+      "index": 1,
+      "label": "초성 둘째 구성 자모 · 본체",
+      "role": "initial",
+      "part": 2,
+      "feature": "body",
+      "color": "#b870ef"
+    },
+    {
+      "id": "initial.part1.added-bar",
+      "index": 2,
+      "label": "초성 첫째 구성 자모 · 추가 가로획",
+      "role": "initial",
+      "part": 1,
+      "feature": "added-bar",
+      "color": "#e649a5"
+    },
+    {
+      "id": "medial.part1.vertical",
+      "index": 3,
+      "label": "중성 첫째 구성 자모 · 세로",
+      "role": "medial",
+      "part": 1,
+      "feature": "vertical",
+      "color": "#f0ab37"
+    },
+    {
+      "id": "medial.part1.horizontal",
+      "index": 4,
+      "label": "중성 첫째 구성 자모 · 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "horizontal",
+      "color": "#27ba8b"
+    },
+    {
+      "id": "medial.part1.right-bar",
+      "index": 5,
+      "label": "중성 첫째 구성 자모 · 오른쪽 짧은 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "right-bar",
+      "color": "#eb6838"
+    },
+    {
+      "id": "medial.part1.left-upper-bar",
+      "index": 6,
+      "label": "중성 첫째 구성 자모 · 왼쪽 위 짧은 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "left-upper-bar",
+      "color": "#a3b82d"
+    },
+    {
+      "id": "medial.part1.left-lower-bar",
+      "index": 7,
+      "label": "중성 첫째 구성 자모 · 왼쪽 아래 짧은 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "left-lower-bar",
+      "color": "#17a7c2"
+    },
+    {
+      "id": "medial.part2.vertical",
+      "index": 8,
+      "label": "중성 둘째 구성 자모 · 세로",
+      "role": "medial",
+      "part": 2,
+      "feature": "vertical",
+      "color": "#4f8df0"
+    },
+    {
+      "id": "medial.part2.right-bar",
+      "index": 9,
+      "label": "중성 둘째 구성 자모 · 오른쪽 짧은 가로",
+      "role": "medial",
+      "part": 2,
+      "feature": "right-bar",
+      "color": "#d9a22a"
+    },
+    {
+      "id": "medial.part3.vertical",
+      "index": 10,
+      "label": "중성 셋째 구성 자모 · 세로",
+      "role": "medial",
+      "part": 3,
+      "feature": "vertical",
+      "color": "#8a78ec"
+    },
+    {
+      "id": "final.part1.body",
+      "index": 11,
+      "label": "종성 첫째 구성 자모 · 본체",
+      "role": "final",
+      "part": 1,
+      "feature": "body",
+      "color": "#3dbfa6"
+    },
+    {
+      "id": "final.part2.body",
+      "index": 12,
+      "label": "종성 둘째 구성 자모 · 본체",
+      "role": "final",
+      "part": 2,
+      "feature": "body",
+      "color": "#e36cbb"
+    },
+    {
+      "id": "medial.part1.left-bar",
+      "index": 13,
+      "label": "중성 첫째 구성 자모 · 왼쪽 짧은 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "left-bar",
+      "color": "#c761b8"
+    },
+    {
+      "id": "medial.part1.right-upper-bar",
+      "index": 14,
+      "label": "중성 첫째 구성 자모 · 오른쪽 위 짧은 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "right-upper-bar",
+      "color": "#ec7c49"
+    },
+    {
+      "id": "medial.part1.right-lower-bar",
+      "index": 15,
+      "label": "중성 첫째 구성 자모 · 오른쪽 아래 짧은 가로",
+      "role": "medial",
+      "part": 1,
+      "feature": "right-lower-bar",
+      "color": "#db4e76"
+    },
+    {
+      "id": "medial.part1.left-vertical",
+      "index": 16,
+      "label": "중성 첫째 구성 자모 · 왼쪽 짧은 세로",
+      "role": "medial",
+      "part": 1,
+      "feature": "left-vertical",
+      "color": "#74b95d"
+    },
+    {
+      "id": "medial.part1.right-vertical",
+      "index": 17,
+      "label": "중성 첫째 구성 자모 · 오른쪽 짧은 세로",
+      "role": "medial",
+      "part": 1,
+      "feature": "right-vertical",
+      "color": "#18b4a8"
+    },
+    {
+      "id": "medial.part2.left-bar",
+      "index": 18,
+      "label": "중성 둘째 구성 자모 · 왼쪽 짧은 가로",
+      "role": "medial",
+      "part": 2,
+      "feature": "left-bar",
+      "color": "#dc9641"
+    },
+    {
+      "id": "final.part1.added-bar",
+      "index": 19,
+      "label": "종성 첫째 구성 자모 · 추가 가로획",
+      "role": "final",
+      "part": 1,
+      "feature": "added-bar",
+      "color": "#35b4d0"
+    }
+  ],
+  "paintPolicy": {
+    "id": "continuous-stem-over-branch",
+    "scope": "within-original-source-layer",
+    "rule": "Paint short connecting branches before the continuous supporting stroke. For ㅗ the supporting stroke is horizontal; for ㅏ/ㅕ it is vertical. Keep both verticals continuous in ㅐ/ㅙ and the main body continuous in ㅋ.",
+    "geometry": "Retain the official static font's original glyph outlines and metrics. Use source contours only as semantic masks, clipped to the official filled outline, with source-layer priority and internal overlaps preserved.",
+    "opacity": "Opaque palettes are assumed for junction ownership; transparent colors may reveal overlapping contours underneath."
+  }
+}

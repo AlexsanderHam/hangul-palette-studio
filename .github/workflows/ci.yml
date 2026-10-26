@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck, lint and tests
+        run: bun run check
+
+  color-fonts:
+    name: Nine color weights and reproducible packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+      - run: bun install --frozen-lockfile
+      - name: Cache pinned Pretendard source
+        uses: actions/cache@v4
+        with:
+          path: .cache/pretendard-src
+          key: pretendard-source-v1.3.9-5c41199ea0024a9e0b2cb31735265056e5472d76
+      - name: Extract reference contours and verify reproducibility
+        run: |
+          bun run extract --output .cache/ci/glyphs-first.json
+          bun run extract --output .cache/ci/glyphs-repeat.json
+          cmp .cache/ci/glyphs-first.json .cache/ci/glyphs-repeat.json
+      - name: Prepare font compiler
+        run: bun run setup:font
+      - name: Run complete test suite and font integration checks
+        env:
+          STUDIO_FONT_INTEGRATION: "1"
+        run: bun test

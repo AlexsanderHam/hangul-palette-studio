@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Hangul Palette의 색상을 고르고 아홉 굵기의 실제 컬러 웹폰트를 미리보는 로컬 제작 도구">
+    <title>Hangul Palette Studio</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311131a'/%3E%3Ctext x='32' y='45' text-anchor='middle' font-size='43' font-family='sans-serif' fill='%2389a1ff'%3Eㅎ%3C/text%3E%3C/svg%3E"
+    >
+    <link rel="stylesheet" href="/studio.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#font-workspace-view">작업 영역으로 이동</a>
+    <header class="masthead">
+      <div class="brand">
+        <h1 id="font-export-title" class="brand-title">Hangul <span>Palette</span> <span class="brand-studio">Studio</span></h1>
+        <div id="sync-status" class="sync-pill" data-state="loading" role="status">
+          <span class="sync-dot" aria-hidden="true"></span><span id="sync-label">연결 중</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="header-downloads" role="group" aria-label="파일 다운로드">
+          <button id="font-css-download-btn" type="button" class="quiet-btn" title="WOFF2 파일과 같은 폴더에서 사용할 색상 CSS" disabled>CSS만 다운로드</button>
+          <button id="font-download-btn" type="button" class="primary-btn" disabled>폰트 다운로드</button>
+        </div>
+        <span class="action-divider" aria-hidden="true"></span>
+        <button id="workspace-info-btn" type="button" class="quiet-btn" aria-haspopup="dialog">작업 정보</button>
+      </div>
+    </header>
+
+    <div id="connection-banner" class="connection-banner" hidden role="status">
+      <div><strong id="connection-title"></strong><span id="connection-detail"></span></div>
+      <div class="banner-actions">
+        <button id="retry-btn" class="small-btn" type="button" hidden>다시 시도</button>
+        <button id="discard-btn" class="small-btn" type="button" hidden>보류 변경 버리기</button>
+        <button id="takeover-btn" class="small-btn" type="button" hidden>이 탭에서 편집</button>
+      </div>
+    </div>
+
+    <main id="font-workspace-view" class="font-workspace-view" aria-label="폰트 작업" tabindex="-1">
+      <section class="font-palette-panel" aria-labelledby="font-palette-title">
+        <div class="palette-panel-head">
+          <div class="font-section-head">
+            <h2 id="font-palette-title">팔레트</h2>
+            <div class="history-actions" role="group" aria-label="팔레트 변경 기록">
+              <button id="undo-btn" class="icon-btn" type="button" title="실행 취소 · Ctrl/⌘ Z" aria-label="실행 취소" disabled>↶</button>
+              <button id="redo-btn" class="icon-btn" type="button" title="다시 실행 · Ctrl/⌘ Shift Z" aria-label="다시 실행" disabled>↷</button>
+            </div>
+          </div>
+          <p class="font-palette-hint">색상을 바꾸면 미리보기에 바로 적용됩니다.</p>
+          <div id="font-palette-presets" class="font-palette-presets" role="group" aria-label="색상 프리셋">
+            <button type="button" class="small-btn" data-font-preset="default">기본 색상</button>
+            <button type="button" class="small-btn" data-font-preset="jamo">자모별</button>
+            <button type="button" class="small-btn" data-font-preset="mono">단색</button>
+          </div>
+          <div id="font-palette-save-row" class="font-palette-save-row">
+            <span id="font-palette-save-state" role="status" aria-live="polite">팔레트를 불러오는 중…</span>
+            <div class="font-palette-save-actions">
+              <button id="font-palette-save-btn" type="button" class="small-btn" hidden>색상 저장</button>
+              <button id="font-palette-discard-btn" type="button" class="small-btn" title="이 탭의 미저장 색상을 버리고 저장된 팔레트를 표시합니다" aria-describedby="font-palette-save-state" hidden>변경 버리기</button>
+            </div>
+          </div>
+        </div>
+        <div id="font-palette-slots" class="font-palette-slots"></div>
+      </section>
+
+      <section class="font-preview-panel" aria-labelledby="font-preview-title">
+        <div class="preview-panel-head">
+          <h2 id="font-preview-title">미리보기</h2>
+          <div class="font-readiness">
+            <span id="font-status" role="status" aria-live="polite">폰트 준비 중…</span>
+            <button id="font-retry-btn" type="button" class="small-btn" hidden>다시 시도</button>
+          </div>
+        </div>
+        <div class="font-preview-controls">
+          <div class="font-sample-controls">
+            <div class="font-sample-field">
+              <label class="font-sample-label" for="font-preview-input">미리보기 문장</label>
+              <textarea id="font-preview-input" rows="1" maxlength="1200" spellcheck="false">가 값 과 밖 껴 쬸 휺 ABC 123 !?</textarea>
+            </div>
+            <form id="font-glyph-search-form" class="font-glyph-search" role="search">
+              <label for="font-glyph-search-input">한 글자 비교</label>
+              <div class="search-box">
+                <input id="font-glyph-search-input" type="search" placeholder="예: 휺" autocomplete="off" spellcheck="false" aria-describedby="font-glyph-search-message">
+                <button type="submit">적용</button>
+              </div>
+              <p id="font-glyph-search-message" class="field-message" aria-live="polite">완성형 한글 또는 ㄱ–ㅣ</p>
+            </form>
+          </div>
+          <div class="font-preview-tools">
+            <label for="font-preview-weight">굵기 <select id="font-preview-weight"><option value="all">전체 9개 비교</option></select></label>
+            <label for="font-preview-size">크기 <input id="font-preview-size" type="range" min="24" max="112" value="48"><output id="font-preview-size-value" for="font-preview-size">48 px</output></label>
+            <div class="font-preview-theme">
+              <span id="font-theme-label">배경</span>
+              <div class="view-switch" role="group" aria-labelledby="font-theme-label">
+                <button type="button" data-font-theme="dark" aria-pressed="true">어둡게</button>
+                <button type="button" data-font-theme="light" aria-pressed="false">밝게</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="font-notice" class="font-notice" hidden>
+          <p id="font-notice-message" role="status" aria-live="polite"></p>
+          <p id="font-export-setup" class="field-message" hidden>Studio 폴더의 터미널에서 <code id="font-export-setup-command">bun run setup:font</code>를 실행한 뒤 다시 시도하세요.</p>
+        </div>
+        <div id="font-preview-canvas" class="font-preview-canvas" data-theme="dark" tabindex="0" aria-label="실제 컬러 폰트 미리보기">
+          <div id="font-preview-placeholder" class="font-preview-placeholder">
+            <span class="preview-placeholder-mark" aria-hidden="true">가</span>
+            <p>현재 소스의 폰트를 준비하고 있습니다</p>
+            <span>준비가 끝나면 아홉 굵기를 바로 비교할 수 있습니다.<br>그동안 팔레트의 색상을 골라두세요.</span>
+          </div>
+          <div id="font-preview-text" class="font-preview-text" aria-label="선택한 색상의 실제 컬러 폰트 아홉 굵기 비교" hidden></div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="workspace-info-dialog" class="studio-dialog" aria-labelledby="workspace-info-title">
+      <div class="dialog-head">
+        <h2 id="workspace-info-title">작업 정보</h2>
+        <button type="button" class="icon-btn" data-close-dialog aria-label="작업 정보 닫기">×</button>
+      </div>
+      <div class="dialog-body">
+        <dl class="workspace-info-list">
+          <div><dt>저장 번호</dt><dd id="revision-label">REV —</dd></div>
+          <div><dt>마지막 저장</dt><dd id="font-export-snapshot">작업본을 불러오는 중입니다.</dd></div>
+          <div><dt>폰트 구성</dt><dd id="font-export-coverage">한글 세부 색칠 11,223자 · 9개 굵기 · 원본 영문·숫자·기호 포함</dd></div>
+          <div><dt>기본 색상</dt><dd>검정 · 선택한 색상은 CSS에만 적용</dd></div>
+          <div><dt>ZIP 구성</dt><dd>WOFF2 9종 · 색상 CSS · 미리보기 · 라이선스</dd></div>
+        </dl>
+        <p id="font-preview-status" class="font-preview-status">현재 소스의 폰트를 자동으로 준비합니다.</p>
+        <div class="workspace-info-actions">
+          <button id="backup-btn" class="quiet-btn" type="button" disabled>백업 복원</button>
+          <button id="help-btn" class="quiet-btn" type="button">사용 방법</button>
+        </div>
+      </div>
+      <div class="dialog-foot"><button type="button" class="primary-btn" data-close-dialog>닫기</button></div>
+    </dialog>
+
+    <dialog id="help-dialog" class="studio-dialog" aria-labelledby="help-title">
+      <div class="dialog-head">
+        <div>
+          <span class="overline">WORKSPACE GUIDE</span>
+          <h2 id="help-title">Studio 사용하기</h2>
+        </div>
+        <button type="button" class="icon-btn" data-close-dialog aria-label="도움말 닫기">×</button>
+      </div>
+      <div class="dialog-body">
+        <p>색상을 고르고 실제 컬러 폰트를 확인하는 로컬 제작 도구입니다.</p>
+        <h3>색을 고르고 미리보기를 확인하세요</h3>
+        <p>Studio를 열면 현재 소스에 맞는 폰트를 자동으로 준비합니다. 이미 준비된 폰트는 다시 사용합니다. Thin부터 Black까지 아홉 굵기를 비교하거나 한 글자 비교로 원하는 한글을 확인하세요. 색상은 폰트를 다시 만들지 않고 바로 바뀝니다.</p>
+        <p>폰트의 기본색은 검정입니다. 선택한 색상은 미리보기와 CSS에 적용됩니다. 한글의 세부 영역은 영역별 색상으로, 영문·숫자·기호는 일반 CSS <code>color</code>로 색칠합니다.</p>
+        <h3>웹에서 사용하기</h3>
+        <p><strong>폰트 다운로드</strong>로 WOFF2 아홉 종, 현재 색상의 CSS, 미리보기와 라이선스를 ZIP으로 받습니다. 색상만 바꿀 때는 <strong>CSS만 다운로드</strong>를 이용하세요. CSS와 WOFF2를 같은 폴더에 두고 <code>hangul-palette</code> 클래스를 적용하면 됩니다.</p>
+        <h3>저장과 복원</h3>
+        <p>색상 변경은 로컬 작업본에 자동으로 저장됩니다. 저장되지 않은 색상은 팔레트의 <strong>변경 버리기</strong>로 취소하고 저장된 팔레트로 돌아갈 수 있습니다. 서버에 보낸 변경이 보류된 경우에는 상단 안내에서 다시 시도하거나 버려 주세요.</p>
+        <p>저장된 변경은 팔레트 옆의 실행 취소·다시 실행과 <strong>작업 정보 → 백업 복원</strong>을 이용하세요. 한 번에 한 탭에서 색상을 편집합니다.</p>
+        <p><kbd>Ctrl/⌘</kbd> <kbd>Z</kbd>로 실행 취소, <kbd>Ctrl/⌘</kbd> <kbd>Shift</kbd> <kbd>Z</kbd>로 다시 실행합니다. 텍스트 입력 중에는 입력 내용에 대한 기본 단축키가 작동합니다.</p>
+      </div>
+      <div class="dialog-foot"><button type="button" class="primary-btn" data-close-dialog>확인</button></div>
+    </dialog>
+
+    <dialog id="backup-dialog" class="studio-dialog" aria-labelledby="backup-title">
+      <div class="dialog-head">
+        <div>
+          <span class="overline">PROJECT RECOVERY</span>
+          <h2 id="backup-title">백업 복원</h2>
+        </div>
+        <button type="button" class="icon-btn" data-close-dialog aria-label="백업 복원 닫기">×</button>
+      </div>
+      <div class="dialog-body">
+        <p>팔레트를 선택한 백업으로 복원합니다. 복원도 새 변경으로 저장되며 실행 취소할 수 있습니다.</p>
+        <label for="backup-select">복원할 백업</label
+        ><select id="backup-select"></select>
+        <div id="backup-preview" class="backup-preview"></div>
+        <label class="confirm-check"
+          ><input id="backup-confirm" type="checkbox">현재 팔레트가 바뀌는 것을 확인했습니다.</label
+        >
+        <p id="backup-message" class="field-message" role="status"></p>
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="quiet-btn" data-close-dialog>취소</button
+        ><button id="restore-btn" type="button" class="danger-btn" disabled>이 백업으로 복원</button>
+      </div>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="/studio.js"></script>
+  </body>
+</html>
