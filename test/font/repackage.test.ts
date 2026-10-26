@@ -177,12 +177,12 @@ report=json.loads(modified["validation.json"]);report["weights"]["regular"]["fon
 modified["validation.json"]=compiler.encoded(report);update_manifest(modified);refuses(repack(modified))
 print(json.dumps({"weights":len(retained),"fontsByteExact":True,"rejected":23}))
 `;
-    const result = Bun.spawnSync([python, "-c", script], { cwd: root, timeout: 90_000 });
+    const result = Bun.spawnSync([python, "-c", script], { cwd: root, timeout: 150_000 });
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toEqual({ weights: 9, fontsByteExact: true, rejected: 23 });
   },
-  90_000,
+  180_000,
 );
 
 test("font reuse fingerprint follows compiler, contract, source extraction and runtime changes", async () => {

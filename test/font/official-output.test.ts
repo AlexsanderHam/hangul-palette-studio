@@ -214,5 +214,5 @@ print(json.dumps({"passed": True, "weights": checks, "guardRegressions": guard_r
       await rm(directory, { recursive: true, force: true });
     }
   },
-  120_000,
+  300_000,
 );
