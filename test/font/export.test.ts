@@ -99,7 +99,7 @@ function inspectPackage(result: ColorFontExportResult, input: ColorFontExportOpt
     complete: true,
     schemaVersion: 1,
     format: "hangul-palette-color-font-v1",
-    fontFormat: "WOFF2 / CFF / COLR v1 with v0 fallback / CPAL v0",
+    fontFormat: "WOFF2 / CFF / COLR v1 container with v0 layers / CPAL v0",
     family: "Hangul Palette",
     fontVersion: FONT_VERSION,
     colorPolicy: { fontDefault: "#000000", selectedPalette: "css-only" },
@@ -246,15 +246,14 @@ function inspectPackage(result: ColorFontExportResult, input: ColorFontExportOpt
     expect(Object.values(report.originalPreservation).every((passed) => passed === true)).toBe(true);
     expect(report.encodedCOLRLayers).toBeGreaterThan(0);
     expect(report.encodedCOLRLayers).toBeLessThanOrEqual(65535);
-    expect(report.colorLayers).toMatchObject({
+    expect(report.colorLayers).toEqual({
       colrVersion: 1,
       v0Glyphs: 11223,
-      v1Glyphs: 11223,
       v0LayerRecords: report.encodedCOLRLayers,
-      v0FallbackMatchesV1: true,
+      v1Glyphs: 0,
+      v1LayerRecords: 0,
+      v1LayerReferences: 0,
     });
-    expect(report.colorLayers.v1LayerRecords).toBeGreaterThan(0);
-    expect(report.colorLayers.v1LayerReferences).toBe(report.checks.decodedRegionOutlines);
     expect(report.fontGlyphs).toBeLessThanOrEqual(65535);
     expect(report.maximumDecodedCoordinateError).toBeLessThanOrEqual(report.decodedCoordinateTolerance);
     expect(report.decodedGeometryProof).toBe("matching-cubic-topology-and-bounded-control-points");
@@ -443,7 +442,6 @@ from pathlib import Path
 from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.ttLib import TTFont
-from fontTools.ttLib.tables.otTables import PaintFormat
 
 folder, version = Path(sys.argv[1]), sys.argv[2]
 pins = json.loads(Path(sys.argv[3]).read_text())["files"]
@@ -469,9 +467,16 @@ def records(glyph):
 
 def decoded_color_layers(font):
     # Independent decoding from the shipped binary, without compiler helpers or
-    # success flags: both representations must paint the same ordered layers.
+    # success flags: a v1 container must draw only its complete v0 records.
     assert font["COLR"].version == 1
+    data = font.reader["COLR"]
+    base_list_offset, *optional_offsets = struct.unpack_from(">IIIII", data, 14)
+    assert base_list_offset > 0 and struct.unpack_from(">I", data, base_list_offset)[0] == 0
+    assert optional_offsets == [0, 0, 0, 0]
     table = font["COLR"].table
+    assert table.BaseGlyphList is not None
+    assert table.BaseGlyphList.BaseGlyphCount == 0 and table.BaseGlyphList.BaseGlyphPaintRecord == []
+    assert all(getattr(table, key, None) is None for key in ("LayerList", "ClipList", "VarIndexMap", "VarStore"))
     base_records = table.BaseGlyphRecordArray.BaseGlyphRecord
     layer_records = table.LayerRecordArray.LayerRecord
     assert table.BaseGlyphRecordCount == len(base_records) == 11223
@@ -482,26 +487,7 @@ def decoded_color_layers(font):
         layers = layer_records[item.FirstLayerIndex:item.FirstLayerIndex + item.NumLayers]
         assert len(layers) == item.NumLayers
         legacy[item.BaseGlyph] = [(layer.LayerGlyph, layer.PaletteIndex) for layer in layers]
-    modern_records = table.BaseGlyphList.BaseGlyphPaintRecord
-    assert table.BaseGlyphList.BaseGlyphCount == len(modern_records) == 11223
-    assert table.LayerList.LayerCount == len(table.LayerList.Paint) > 0
-    def flatten(paint, ancestors=frozenset()):
-        assert id(paint) not in ancestors
-        ancestors = ancestors | {id(paint)}
-        if paint.Format == PaintFormat.PaintColrLayers:
-            assert paint.NumLayers > 0
-            children = table.LayerList.Paint[paint.FirstLayerIndex:paint.FirstLayerIndex + paint.NumLayers]
-            assert len(children) == paint.NumLayers
-            return [layer for child in children for layer in flatten(child, ancestors)]
-        assert paint.Format == PaintFormat.PaintGlyph
-        assert paint.Paint.Format == PaintFormat.PaintSolid and paint.Paint.Alpha == 1.0
-        return [(paint.Glyph, paint.Paint.PaletteIndex)]
-    modern = {}
-    for item in modern_records:
-        assert item.BaseGlyph not in modern
-        modern[item.BaseGlyph] = flatten(item.Paint)
-    assert modern == legacy
-    return modern
+    return legacy
 
 summary, areas = {}, []
 for profile in profiles:
@@ -602,7 +588,7 @@ for profile in profiles:
                              "coloredGlyphs": len(colored), "coloredMappedCharacters": len(mapped),
                              "halfwidthAliases": len(aliases), "encodedCOLRLayers": layer_records,
                              "weight": weight, "originalDataAndMetricsPreserved": True, "blackPalette": True,
-                             "modernAndLegacyPaintSequencesMatch": True}
+                             "emptyV1ContainerWithCompleteV0Layers": True}
 assert len(areas) == 9 and all(a < b for a, b in zip(areas, areas[1:])), areas
 print(json.dumps(summary))
 `;
@@ -642,7 +628,7 @@ print(json.dumps(summary))
           weight: number;
           originalDataAndMetricsPreserved: boolean;
           blackPalette: boolean;
-          modernAndLegacyPaintSequencesMatch: boolean;
+          emptyV1ContainerWithCompleteV0Layers: boolean;
         }
       >;
       expect(Object.keys(independent).sort()).toEqual(weights.map(({ id }) => id).sort());
@@ -657,7 +643,7 @@ print(json.dumps(summary))
           weight,
           originalDataAndMetricsPreserved: true,
           blackPalette: true,
-          modernAndLegacyPaintSequencesMatch: true,
+          emptyV1ContainerWithCompleteV0Layers: true,
         });
       }
 

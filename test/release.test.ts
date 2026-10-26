@@ -68,7 +68,7 @@ function fixture() {
     schemaVersion: 1,
     family: "Hangul Palette",
     format: "hangul-palette-color-font-v1",
-    fontFormat: "WOFF2 / CFF / COLR v1 with v0 fallback / CPAL v0",
+    fontFormat: "WOFF2 / CFF / COLR v1 container with v0 layers / CPAL v0",
     fontVersion: FONT_VERSION,
     complete: true,
     project: { projectId: "baseline", revision: 0 },
@@ -123,7 +123,7 @@ describe("public distribution", () => {
     expect(manifest.version).toBe(FONT_VERSION);
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.format).toBe("hangul-palette-color-font-v1");
-    expect(manifest.fontFormat).toBe("WOFF2 / CFF / COLR v1 with v0 fallback / CPAL v0");
+    expect(manifest.fontFormat).toBe("WOFF2 / CFF / COLR v1 container with v0 layers / CPAL v0");
     expect(manifest.provenance.studio.version).toBe("1.0.0");
     expect(manifest.inputs.selection).toBe("checked-in-baseline");
     expect(original.inputs.selection).toBe("studio-working-snapshot");

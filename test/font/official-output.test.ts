@@ -14,7 +14,7 @@ const python = join(
 const runIntegration = process.env.STUDIO_FONT_INTEGRATION === "1";
 
 test.skipIf(!runIntegration)(
-  "official COLR v1 compiler preserves originals and matching legacy layers deterministically with changed paint order",
+  "official v1 container preserves originals and v0 layers deterministically with changed paint order",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "studio-official-color-font-"));
     try {

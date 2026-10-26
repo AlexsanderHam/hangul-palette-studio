@@ -1,4 +1,4 @@
-"""Add matching COLR v1 paints and v0 fallback layers to pinned static OTFs.
+"""Add COLR v0 layers in a v1 container to pinned static OTFs.
 
 The official glyphs remain the monochrome fallback. Their charstrings, CFF
 private data, subroutines, cmap bytes, glyph IDs and metrics are retained; only
@@ -30,13 +30,12 @@ from fontTools.pens.transformPen import TransformPen
 from fontTools.svgLib.path import parse_path
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables.DefaultTable import DefaultTable
-from fontTools.ttLib.tables.otTables import PaintFormat
 
 from weights import PROFILES
 
 HERE = Path(__file__).resolve().parent
 FAMILY = "Hangul Palette"
-COLOR_FONT_FORMAT = "WOFF2 / CFF / COLR v1 with v0 fallback / CPAL v0"
+COLOR_FONT_FORMAT = "WOFF2 / CFF / COLR v1 container with v0 layers / CPAL v0"
 SOURCE_UPM = 2896
 MASK_GUARD = 3.0
 MASK_GUARD_CANDIDATES = (3.0, 3.125, 3.25, 3.5, 4.0)
@@ -57,22 +56,19 @@ class OfficialFontError(Exception):
 
 
 def build_color_layers(color_glyphs, glyph_map):
-    """Encode one opaque paint sequence twice, for modern and legacy clients."""
-    paints = {
-        base: {"Format": PaintFormat.PaintColrLayers,
-               "Layers": [{"Format": PaintFormat.PaintGlyph, "Glyph": name,
-                           "Paint": {"Format": PaintFormat.PaintSolid,
-                                     "PaletteIndex": index, "Alpha": 1.0}}
-                          for name, index in layers]}
-        for base, layers in color_glyphs.items()
-    }
-    table = buildCOLR(paints, version=1, glyphMap=glyph_map)
+    """Keep shared v0 layers without the iOS-incompatible v1 CFF paint path.
+
+    The v1 container selects Chromium's Fontations backend on Windows, avoiding
+    its DirectWrite palette-override crash. An empty, present BaseGlyphList lets
+    every client use the same v0 glyph/layer records instead of separate paints.
+    """
+    table = buildCOLR({}, version=1, glyphMap=glyph_map)
     populateCOLRv0(table.table, color_glyphs, glyph_map)
     return table
 
 
 def _color_layer_data(font):
-    """Decode both representations and reject anything outside our paint model."""
+    """Decode v0 layers and require the tested v1-container-only structure."""
     def require(condition, message):
         if not condition:
             raise OfficialFontError("font_validation", message)
@@ -83,11 +79,16 @@ def _color_layer_data(font):
     try:
         require("COLR" in font and "CPAL" in font, "COLR and CPAL tables are required.")
         require(font["COLR"].version == 1 and font["CPAL"].version == 0,
-                "COLR v1 with v0 fallback and CPAL v0 are required.")
+                "A COLR v1 container with v0 layers and CPAL v0 is required.")
         table = font["COLR"].table
         require(table.Version == 1, "The COLR header must declare version 1.")
-        require(all(getattr(table, field, None) is None for field in ("ClipList", "VarIndexMap", "VarStore")),
-                "Color layers must not contain clipping or variation subtables.")
+        require(all(getattr(table, field, None) is None
+                    for field in ("LayerList", "ClipList", "VarIndexMap", "VarStore")),
+                "The COLR container must not contain v1 paint, clipping or variation subtables.")
+        modern = table.BaseGlyphList
+        require(modern is not None and type(modern.BaseGlyphCount) is int and
+                modern.BaseGlyphCount == 0 and modern.BaseGlyphPaintRecord == [],
+                "The COLR v1 base glyph list must be present and empty.")
         palette_entries = font["CPAL"].numPaletteEntries
         require(integer(palette_entries, 1, 65535), "The CPAL entry count is invalid.")
         glyph_map = font.getReverseGlyphMap()
@@ -96,100 +97,37 @@ def _color_layer_data(font):
         require(integer(table.BaseGlyphRecordCount, 1, 65535) and
                 table.BaseGlyphRecordCount == len(bases) and
                 integer(table.LayerRecordCount, 1, 65535) and table.LayerRecordCount == len(records),
-                "Complete COLR v0 fallback records are required.")
+                "Complete COLR v0 layer records are required.")
         for layer in records:
             require(layer.LayerGlyph in glyph_map and integer(layer.PaletteIndex, 0, palette_entries - 1),
-                    "A fallback layer references an invalid glyph or palette entry.")
+                    "A color layer references an invalid glyph or palette entry.")
         legacy, previous = {}, -1
         for base in bases:
             require(base.BaseGlyph in glyph_map and glyph_map[base.BaseGlyph] > previous,
-                    "Fallback base glyphs must be unique and ordered by glyph ID.")
+                    "Color base glyphs must be unique and ordered by glyph ID.")
             previous = glyph_map[base.BaseGlyph]
             first, count = base.FirstLayerIndex, base.NumLayers
             require(integer(first, 0, len(records) - 1) and integer(count, 1, 65535) and
-                    first + count <= len(records), "A fallback layer slice is out of bounds.")
+                    first + count <= len(records), "A color layer slice is out of bounds.")
             legacy[base.BaseGlyph] = [(layer.LayerGlyph, layer.PaletteIndex)
                                       for layer in records[first:first + count]]
 
-        modern = table.BaseGlyphList
-        layer_list = table.LayerList
-        paints = layer_list.Paint if layer_list is not None else []
-        require(integer(modern.BaseGlyphCount, 1, 65535) and
-                modern.BaseGlyphCount == len(modern.BaseGlyphPaintRecord) == len(legacy),
-                "Every fallback glyph requires an actual COLR v1 paint.")
-        require(layer_list is None or (integer(layer_list.LayerCount, 1, 0xffffffff) and
-                                      layer_list.LayerCount == len(paints)),
-                "The COLR v1 layer list is invalid.")
-        limit = max(map(len, legacy.values()))
-        expanded, heights, active = {}, {}, set()
-
-        def expand(paint, depth=0):
-            identity = id(paint)
-            require(identity not in active and depth <= 64, "A color paint graph is cyclic or too deep.")
-            if identity in expanded:
-                require(depth + heights[identity] <= 64, "A color paint graph is too deep.")
-                return expanded[identity]
-            active.add(identity)
-            try:
-                if paint.Format == PaintFormat.PaintColrLayers:
-                    first, count = paint.FirstLayerIndex, paint.NumLayers
-                    require(integer(first, 0, len(paints) - 1) and integer(count, 1, 255) and
-                            first + count <= len(paints), "A COLR v1 layer slice is out of bounds.")
-                    result, height = [], 0
-                    for child in paints[first:first + count]:
-                        result.extend(expand(child, depth + 1))
-                        height = max(height, 1 + heights[id(child)])
-                        require(len(result) <= limit, "A paint sequence exceeds its fallback layer count.")
-                else:
-                    require(paint.Format == PaintFormat.PaintGlyph and paint.Glyph in glyph_map,
-                            "Only layer lists and valid glyph paints are supported.")
-                    fill = paint.Paint
-                    require(fill.Format == PaintFormat.PaintSolid and fill.Alpha == 1.0 and
-                            integer(fill.PaletteIndex, 0, palette_entries - 1),
-                            "Each layer requires an opaque solid palette color.")
-                    result = [(paint.Glyph, fill.PaletteIndex)]
-                    height = 0
-                require(depth + height <= 64, "A color paint graph is too deep.")
-                heights[identity] = height
-                expanded[identity] = tuple(result)
-                return expanded[identity]
-            finally:
-                active.remove(identity)
-
-        # Validate even shared or unused layer-list entries, never just roots.
-        for paint in paints:
-            expand(paint)
-        previous, seen = -1, set()
-        for base in modern.BaseGlyphPaintRecord:
-            name = base.BaseGlyph
-            require(name in legacy and glyph_map[name] > previous,
-                    "COLR v1 base glyphs must match the ordered fallback glyphs.")
-            previous = glyph_map[name]
-            # FontTools collapses a one-layer list into its glyph paint.
-            require(base.Paint.Format == PaintFormat.PaintColrLayers or
-                    (len(legacy[name]) == 1 and base.Paint.Format == PaintFormat.PaintGlyph),
-                    "Each colored glyph requires a COLR v1 layer sequence.")
-            require(list(expand(base.Paint)) == legacy[name],
-                    "COLR v1 glyphs, palette entries or paint order differ from the v0 fallback.")
-            seen.add(name)
-        require(seen == set(legacy), "COLR v1 and fallback coverage differ.")
         audit = {"colrVersion": 1, "v0Glyphs": len(legacy), "v0LayerRecords": len(records),
-                 "v1Glyphs": len(seen), "v1LayerRecords": len(paints),
-                 "v1LayerReferences": sum(map(len, legacy.values())), "v0FallbackMatchesV1": True}
+                 "v1Glyphs": 0, "v1LayerRecords": 0, "v1LayerReferences": 0}
         return legacy, audit
     except OfficialFontError:
         raise
     except Exception as error:
-        raise OfficialFontError("font_validation", "Cannot decode matching modern and fallback color layers.") from error
+        raise OfficialFontError("font_validation", "Cannot decode the COLR v1 container and v0 color layers.") from error
 
 
 def color_layer_sequences(font):
-    """Return base -> [(glyph, palette index)] after verifying both color formats."""
+    """Return base -> [(glyph, palette index)] after verifying the container."""
     return _color_layer_data(font)[0]
 
 
 def color_layer_audit(font):
-    """Record the decoded modern/fallback coverage and their exact equivalence."""
+    """Record v0 layer coverage and the absence of separate v1 paints."""
     return _color_layer_data(font)[1]
 
 

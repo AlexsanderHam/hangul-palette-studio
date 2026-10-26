@@ -169,20 +169,23 @@ for field,value in (("schemaVersion",99),("originalPreservation",{}),("checks",{
 modified=dict(files);report=json.loads(modified["validation.json"])
 report["weights"]["regular"]["originalPreservation"]["charstrings"]=False
 modified["validation.json"]=compiler.encoded(report);update_manifest(modified);refuses(repack(modified))
-# Rehash a readable font and all package metadata after replacing either color
-# representation. Trusting the success flags or hashes alone would accept it.
-for mutation in ("legacy-only", "modern-palette-mismatch"):
+# Rehash readable fonts and package metadata after removing the v1 container or
+# adding real modern paints. Neither may pass on claimed success flags alone.
+for mutation in ("legacy-only", "true-modern-paints"):
     modified=dict(files)
     with TTFont(io.BytesIO(modified["hangul-palette-regular.woff2"])) as opened:
         if mutation=="legacy-only":
             opened["COLR"]=buildCOLR(official.color_layer_sequences(opened),version=0,glyphMap=opened.getReverseGlyphMap())
         else:
+            colors=official.color_layer_sequences(opened)
+            base=next(iter(colors))
+            name,index=colors[base][0]
+            paint={"Format":PaintFormat.PaintGlyph,"Glyph":name,
+                   "Paint":{"Format":PaintFormat.PaintSolid,"PaletteIndex":index,"Alpha":1.0}}
+            modern=buildCOLR({base:paint},version=1,glyphMap=opened.getReverseGlyphMap()).table
             table=opened["COLR"].table
-            paint=table.BaseGlyphList.BaseGlyphPaintRecord[0].Paint
-            while paint.Format==PaintFormat.PaintColrLayers:
-                paint=table.LayerList.Paint[paint.FirstLayerIndex]
-            assert paint.Format==PaintFormat.PaintGlyph and paint.Paint.Format==PaintFormat.PaintSolid
-            paint.Paint.PaletteIndex=1
+            table.BaseGlyphList=modern.BaseGlyphList
+            table.LayerList=modern.LayerList
         target=io.BytesIO();opened.save(target);modified["hangul-palette-regular.woff2"]=target.getvalue()
     report=json.loads(modified["validation.json"])
     report["weights"]["regular"]["fontSha256"]=compiler.sha(modified["hangul-palette-regular.woff2"])
